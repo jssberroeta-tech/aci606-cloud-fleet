@@ -1,8 +1,8 @@
 # ACI606 · Ejercicio 4 · Cloud Fleet Challenge
 
-**URL pública del servicio:** https://github.com/jssberroeta-tech/aci606-cloud-fleet.git
+**URL pública del servicio:** https://aci606-cloud-fleet.onrender.com
 (documentación interactiva: `/docs` · panel del operador: `/dashboard`)
-
+**Repositorio:** https://github.com/jssberroeta-tech/aci606-cloud-fleet
 **Integrantes:** [Jesús Berroeta, Diego Castillo y Franco Muñoz]
 
 ## Resumen
