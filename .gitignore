@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.env
+*.db
+server.log
+_starter/
+.ipynb_checkpoints/
