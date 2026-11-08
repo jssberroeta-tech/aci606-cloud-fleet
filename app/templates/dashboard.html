@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cloud Fleet · Panel del operador</title>
+<style>
+  :root { --bg:#f6f5f1; --ink:#14213d; --mut:#5b6577; --card:#fdfcf9; --line:#d9dde5;
+          --ok:#2e7d4f; --warn:#c98a00; --crit:#c0392b; --acc:#2f6fb5; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--ink); }
+  header { display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between;
+           padding:16px 24px; background:var(--ink); color:#fff; }
+  header h1 { margin:0; font-size:18px; letter-spacing:.2px; }
+  .pill { display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px; font-weight:600; color:#fff; background:#7a8294; }
+  .pill.up { background:var(--ok); } .pill.down { background:var(--crit); }
+  main { padding:20px 24px 40px; max-width:1280px; margin:0 auto; }
+  .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:20px; }
+  .kpi, .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 14px; }
+  .kpi b { display:block; font-size:22px; } .kpi span { color:var(--mut); font-size:12px; }
+  h2 { font-size:15px; margin:18px 0 10px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:12px; }
+  .card { cursor:pointer; transition:border-color .15s; } .card:hover, .card.sel { border-color:var(--acc); }
+  .row { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .st { font-weight:700; font-size:12px; padding:2px 9px; border-radius:6px; color:#fff; }
+  .NORMAL { background:var(--ok); } .WARNING { background:var(--warn); } .CRITICAL { background:var(--crit); } .NONE { background:#7a8294; }
+  .bar { height:8px; background:#e6e9ef; border-radius:4px; overflow:hidden; margin:8px 0 6px; }
+  .bar > i { display:block; height:100%; background:var(--ok); }
+  .meta { color:var(--mut); font-size:12px; display:grid; grid-template-columns:1fr 1fr; gap:2px 10px; }
+  canvas { width:100%; height:220px; background:var(--card); border:1px solid var(--line); border-radius:10px; }
+  .dist { display:flex; gap:8px; flex-wrap:wrap; }
+  .empty { color:var(--mut); padding:24px; text-align:center; border:1px dashed var(--line); border-radius:10px; }
+  select { padding:4px 8px; border-radius:6px; border:1px solid var(--line); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Cloud Fleet · Panel del operador</h1>
+  <div><span id="svc" class="pill">conectando…</span> <span id="mdl" class="pill">modelo</span>
+       <span id="dbs" class="pill">db</span> <span id="upd" style="font-size:12px;opacity:.8"></span></div>
+</header>
+<main>
+  <section class="kpis">
+    <div class="kpi"><b id="k-robots">–</b><span>Robots conectados</span></div>
+    <div class="kpi"><b id="k-rows">–</b><span>Registros en la base</span></div>
+    <div class="kpi"><b id="k-req">–</b><span>Solicitudes totales</span></div>
+    <div class="kpi"><b id="k-tel">–</b><span>POST /telemetry</span></div>
+    <div class="kpi"><b id="k-pred">–</b><span>POST /predict</span></div>
+    <div class="kpi"><b id="k-p50">–</b><span>Latencia /predict P50 (ms)</span></div>
+    <div class="kpi"><b id="k-p95">–</b><span>Latencia /predict P95 (ms)</span></div>
+    <div class="kpi"><b id="k-err">–</b><span>Errores (4xx / 5xx)</span></div>
+    <div class="kpi"><b id="k-up">–</b><span>Uptime</span></div>
+  </section>
+
+  <h2>Condición de la flota (última predicción por robot)</h2>
+  <div class="dist" id="dist"></div>
+
+  <h2>Robots</h2>
+  <div id="robots" class="grid"></div>
+
+  <h2 class="row"><span>Histórico: <span id="hist-title">selecciona un robot</span></span>
+    <span><label>Variable <select id="var">
+      <option value="battery">battery</option><option value="motor_temp">motor_temp</option>
+      <option value="vibration">vibration</option><option value="motor_current">motor_current</option>
+      <option value="speed">speed</option><option value="obstacle_distance">obstacle_distance</option>
+    </select></label></span></h2>
+  <canvas id="chart" width="1200" height="260"></canvas>
+  <div id="hist-meta" style="color:var(--mut);font-size:12px;margin-top:6px"></div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let selected = null, timer = null;
+const COLORS = { NORMAL:"#2e7d4f", WARNING:"#c98a00", CRITICAL:"#c0392b" };
+
+async function j(url) { const r = await fetch(url, {cache:"no-store"}); if (!r.ok) throw new Error(url + " " + r.status); return r.json(); }
+const fmt = (v, d=1) => (v === null || v === undefined) ? "–" : Number(v).toFixed(d);
+function uptime(s) { s = Math.floor(s); const h = Math.floor(s/3600), m = Math.floor(s%3600/60); return h ? `${h}h ${m}m` : m ? `${m}m ${s%60}s` : `${s}s`; }
+function pill(el, text, cls) { el.textContent = text; el.className = "pill " + (cls || ""); }
+
+async function refresh() {
+  try {
+    const [h, m, robots] = await Promise.all([j("/health"), j("/metrics"), j("/robots")]);
+    pill($("svc"), "API " + h.status, "up");
+    pill($("mdl"), h.model_loaded ? "modelo " + h.model_version : "sin modelo", h.model_loaded ? "up" : "down");
+    pill($("dbs"), "db " + h.db_backend + " " + h.db, h.db === "up" ? "up" : "down");
+    $("k-robots").textContent = m.robots_connected ?? robots.length;
+    $("k-rows").textContent = m.telemetry_rows ?? "–";
+    $("k-req").textContent = m.requests_total;
+    $("k-tel").textContent = m.telemetry_requests;
+    $("k-pred").textContent = m.predict_requests;
+    $("k-p50").textContent = fmt(m.predict_latency_ms.p50);
+    $("k-p95").textContent = fmt(m.predict_latency_ms.p95);
+    $("k-err").textContent = `${m.errors_4xx} / ${m.errors_5xx}`;
+    $("k-up").textContent = uptime(m.uptime_seconds);
+    renderRobots(robots);
+    if (selected) await renderHistory();
+    $("upd").textContent = "actualizado " + new Date().toLocaleTimeString();
+  } catch (e) {
+    pill($("svc"), "API sin conexión", "down");
+  }
+}
+
+function renderRobots(robots) {
+  const counts = {NORMAL:0, WARNING:0, CRITICAL:0};
+  robots.forEach(r => { if (counts[r.predicted_status] !== undefined) counts[r.predicted_status]++; });
+  $("dist").innerHTML = Object.entries(counts).map(([k,v]) => `<span class="st ${k}">${k}: ${v}</span>`).join("");
+  if (!robots.length) { $("robots").innerHTML = '<div class="empty">Sin robots todavía. Inicia el simulador contra esta URL.</div>'; return; }
+  $("robots").innerHTML = robots.map(r => {
+    const st = r.predicted_status || "NONE", b = Math.max(0, Math.min(100, r.battery));
+    const bc = b < 20 ? "var(--crit)" : b < 40 ? "var(--warn)" : "var(--ok)";
+    return `<div class="card ${r.robot_id === selected ? "sel" : ""}" onclick="pick('${r.robot_id}')">
+      <div class="row"><b>${r.robot_id}</b><span class="st ${st}">${st}${r.confidence != null ? " " + Math.round(r.confidence*100) + "%" : ""}</span></div>
+      <div class="bar"><i style="width:${b}%;background:${bc}"></i></div>
+      <div class="meta"><span>Batería ${fmt(b)}%</span><span>Muestras ${r.samples}</span>
+        <span>Temp ${fmt(r.motor_temp)} °C</span><span>Vib ${fmt(r.vibration, 2)}</span>
+        <span>Corriente ${fmt(r.motor_current, 2)} A</span><span>Vel ${fmt(r.speed, 2)}</span>
+        <span>Obstáculo ${fmt(r.obstacle_distance, 2)}</span><span>Hace ${Math.max(0, Math.round(Date.now()/1000 - r.received_at))} s</span></div>
+    </div>`;
+  }).join("");
+}
+
+function pick(id) { selected = id; refresh(); }
+$("var").addEventListener("change", () => selected && renderHistory());
+
+async function renderHistory() {
+  const rows = await j(`/robots/${encodeURIComponent(selected)}/history?limit=300`);
+  $("hist-title").textContent = selected;
+  const key = $("var").value, c = $("chart"), ctx = c.getContext("2d");
+  ctx.clearRect(0, 0, c.width, c.height);
+  if (!rows.length) return;
+  const ys = rows.map(r => r[key]), lo = Math.min(...ys), hi = Math.max(...ys), span = (hi - lo) || 1;
+  const P = {l:50, r:14, t:14, b:24}, W = c.width - P.l - P.r, H = c.height - P.t - P.b;
+  ctx.strokeStyle = "#d9dde5"; ctx.fillStyle = "#5b6577"; ctx.font = "12px system-ui";
+  for (let i = 0; i <= 4; i++) { const y = P.t + H * i / 4; ctx.beginPath(); ctx.moveTo(P.l, y); ctx.lineTo(c.width - P.r, y); ctx.stroke();
+    ctx.fillText((hi - span * i / 4).toFixed(2), 4, y + 4); }
+  const X = i => P.l + W * (rows.length === 1 ? 0.5 : i / (rows.length - 1)), Y = v => P.t + H * (1 - (v - lo) / span);
+  ctx.strokeStyle = "#2f6fb5"; ctx.lineWidth = 2; ctx.beginPath();
+  ys.forEach((v, i) => i ? ctx.lineTo(X(i), Y(v)) : ctx.moveTo(X(i), Y(v))); ctx.stroke();
+  rows.forEach((r, i) => { if (r.predicted_status && r.predicted_status !== "NORMAL") { ctx.fillStyle = COLORS[r.predicted_status]; ctx.beginPath(); ctx.arc(X(i), Y(r[key]), 3.5, 0, 6.3); ctx.fill(); } });
+  const bad = rows.filter(r => r.predicted_status && r.predicted_status !== "NORMAL").length;
+  $("hist-meta").textContent = `Últimas ${rows.length} muestras · mín ${lo.toFixed(2)} · máx ${hi.toFixed(2)} · promedio ${(ys.reduce((a,b)=>a+b,0)/ys.length).toFixed(2)} · puntos de color = WARNING/CRITICAL (${bad})`;
+}
+
+refresh(); timer = setInterval(refresh, 2000);
+</script>
+</body>
+</html>
