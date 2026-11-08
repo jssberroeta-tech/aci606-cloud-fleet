@@ -1,0 +1,34 @@
+{
+  "model_version": "v1",
+  "algorithm": "RandomForest",
+  "features": [
+    "speed",
+    "battery",
+    "motor_temp",
+    "vibration",
+    "motor_current",
+    "obstacle_distance"
+  ],
+  "classes": [
+    "CRITICAL",
+    "NORMAL",
+    "WARNING"
+  ],
+  "label_column": "status",
+  "group_column": "fleet_id",
+  "seed": 42,
+  "metrics_unseen_fleets": {
+    "f1_macro": 0.899,
+    "baseline_majority_f1_macro": 0.2987,
+    "cv_f1_macro": {
+      "RandomForest": 0.9206,
+      "GradientBoosting": 0.918
+    }
+  },
+  "sklearn_version": "1.6.1",
+  "numpy_version": "2.4.6",
+  "pandas_version": "2.2.3",
+  "joblib_version": "1.6.0",
+  "trained_at": "2026-11-05T22:46:53",
+  "justification": "Selección por F1 macro en GroupKFold sobre flotas de train; evaluación en flotas no vistas. CRITICAL es la clase mayoritaria (72 %): la accuracy engaña y el F1 macro exige buen desempeño en NORMAL y WARNING."
+}
